@@ -25,39 +25,74 @@ export async function GET(request) {
   }
 
   try {
-    // 1. Fetch the last 250 orders from Shopify
-    // We use "status=any" to get open, closed, and cancelled orders
-    const response = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/2024-01/orders.json?status=any&limit=250`, {
-      headers: {
-        'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-        'Content-Type': 'application/json'
-      }
-    });
+    let allOrders = [];
+    let lastId = 0;
+    let hasNextPage = true;
+    let pageCount = 0;
 
-    if (!response.ok) {
-        const errText = await response.text();
-        return NextResponse.json({ error: "Shopify API Error", details: errText }, { status: response.status });
+    // LOOP: Fetch all orders, page by page (250 at a time)
+    while (hasNextPage) {
+      console.log(`Fetching page ${pageCount + 1}... (Last ID: ${lastId})`);
+      
+      const response = await fetch(`https://${SHOPIFY_DOMAIN}/admin/api/2024-01/orders.json?status=any&limit=250&since_id=${lastId}`, {
+        headers: {
+          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+          const errText = await response.text();
+          return NextResponse.json({ error: "Shopify API Error", details: errText }, { status: response.status });
+      }
+
+      const data = await response.json();
+      const orders = data.orders;
+
+      if (orders.length === 0) {
+        hasNextPage = false;
+      } else {
+        allOrders = [...allOrders, ...orders];
+        lastId = orders[orders.length - 1].id;
+        pageCount++;
+        
+        // Safety break for Vercel timeouts (optional, stops after ~2500 orders to prevent crash)
+        if (pageCount > 10) hasNextPage = false; 
+      }
     }
 
-    const data = await response.json();
-    const orders = data.orders;
-
     // 2. Transform Shopify data to match our Supabase structure
-    const processedOrders = orders.map(order => {
+    const processedOrders = allOrders.map(order => {
       const customer = order.customer || {};
       const shipping = order.shipping_address || {};
+      const billing = order.billing_address || {};
+
+      // Improved Name Extraction
+      const firstName = customer.first_name || shipping.first_name || '';
+      const lastName = customer.last_name || shipping.last_name || '';
+      const customerName = (firstName || lastName) 
+        ? `${firstName} ${lastName}`.trim() 
+        : 'Guest Customer';
+
+      // Improved Phone Extraction (Checks 4 different places)
+      const phone = order.phone || 
+                    customer.phone || 
+                    shipping.phone || 
+                    billing.phone || 
+                    'No Phone';
 
       // Determine status based on financial/fulfillment state
       let status = 'Pending';
       if (order.fulfillment_status === 'fulfilled') status = 'Delivered';
       else if (order.fulfillment_status === 'partial') status = 'Shipped';
       else if (order.financial_status === 'paid') status = 'Processing';
+      else if (order.cancelled_at) status = 'Cancelled';
 
       return {
         id: `ORD-${order.id}`,
         source: 'Shopify',
-        customer_name: customer.first_name ? `${customer.first_name} ${customer.last_name}` : 'Guest',
-        customer_phone: shipping.phone || customer.phone || 'No Phone',
+        customer_name: customerName,
+        customer_phone: phone,
         customer_location: shipping.city ? `${shipping.city}, ${shipping.province_code || ''}` : 'Unknown',
         total_amount: order.total_price,
         original_amount: order.total_price,
@@ -78,7 +113,7 @@ export async function GET(request) {
 
     return NextResponse.json({ 
       success: true, 
-      message: `Successfully synced ${processedOrders.length} orders from history.` 
+      message: `Successfully synced ${processedOrders.length} orders from history (Processed ${pageCount} pages).` 
     }, { status: 200 });
 
   } catch (err) {
