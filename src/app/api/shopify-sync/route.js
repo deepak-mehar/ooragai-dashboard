@@ -11,8 +11,17 @@ export async function GET(request) {
   const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN; // e.g. "ooragai-originals.myshopify.com"
   const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN; // Starts with "shpat_..."
 
-  if (!SHOPIFY_DOMAIN || !SHOPIFY_ACCESS_TOKEN) {
-    return NextResponse.json({ error: "Missing Shopify Configuration in Vercel" }, { status: 500 });
+  // Check for missing variables and report exactly which one is missing
+  const missingVars = [];
+  if (!SHOPIFY_DOMAIN) missingVars.push('SHOPIFY_STORE_DOMAIN');
+  if (!SHOPIFY_ACCESS_TOKEN) missingVars.push('SHOPIFY_ADMIN_ACCESS_TOKEN');
+
+  if (missingVars.length > 0) {
+    return NextResponse.json({ 
+      error: "Missing Configuration", 
+      details: `Please add the following keys to your Vercel Environment Variables (Settings > Environment Variables): ${missingVars.join(', ')}`,
+      tip: "If you just added them, go to the 'Deployments' tab in Vercel and click 'Redeploy' for them to take effect."
+    }, { status: 500 });
   }
 
   try {
