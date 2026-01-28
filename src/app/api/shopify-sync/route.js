@@ -46,27 +46,41 @@ export async function GET(request) {
 
     const processedOrders = allOrders.map(order => {
       const customer = order.customer || {};
+      const defaultAddr = customer.default_address || {};
       const shipping = order.shipping_address || {};
       const billing = order.billing_address || {};
 
-      // --- NAME CORRECTION ---
-      // 1. Try Shipping Name (Best for Guests/One-time checkouts)
-      // 2. Try Billing Name
-      // 3. Try Customer Profile Name
-      let customerName = shipping.name || billing.name;
-      
-      if (!customerName && (customer.first_name || customer.last_name)) {
-         customerName = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
+      // --- ROBUST NAME FINDER ---
+      // Priority 1: Customer Profile (The "Real" Record)
+      let firstName = customer.first_name || defaultAddr.first_name;
+      let lastName = customer.last_name || defaultAddr.last_name;
+
+      // Priority 2: Shipping/Billing (If guest or POS with no profile)
+      if (!firstName && !lastName) {
+        firstName = shipping.first_name || billing.first_name;
+        lastName = shipping.last_name || billing.last_name;
       }
 
-      // Fallback
+      let customerName = '';
+      if (firstName || lastName) {
+        customerName = `${firstName || ''} ${lastName || ''}`.trim();
+      } else {
+        // Priority 3: Composite 'name' fields
+        customerName = customer.name || shipping.name || billing.name || '';
+      }
+
+      // Fallback: Use Email or Phone as the "Name" if everything else is empty
       if (!customerName) {
-          customerName = order.email || order.phone || 'Guest';
+          customerName = order.email || order.contact_email || order.phone || customer.phone || 'Guest / Walk-in';
       }
 
       // --- PHONE CORRECTION ---
-      // Prioritize Shipping Phone as it's the delivery contact
-      const phone = shipping.phone || billing.phone || customer.phone || order.phone || 'No Phone';
+      const phone = order.phone || 
+                    customer.phone || 
+                    defaultAddr.phone || 
+                    shipping.phone || 
+                    billing.phone || 
+                    'No Phone';
 
       // --- LOCATION CORRECTION ---
       const location = shipping.city 
