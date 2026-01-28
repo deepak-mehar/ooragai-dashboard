@@ -40,7 +40,7 @@ export async function GET(request) {
         allOrders = [...allOrders, ...orders];
         lastId = orders[orders.length - 1].id;
         pageCount++;
-        if (pageCount > 20) hasNextPage = false; // Safety break after ~5000 orders
+        if (pageCount > 20) hasNextPage = false; 
       }
     }
 
@@ -48,33 +48,34 @@ export async function GET(request) {
       const customer = order.customer || {};
       const shipping = order.shipping_address || {};
       const billing = order.billing_address || {};
-      const defaultAddr = customer.default_address || {};
 
-      // 1. ROBUST NAME FINDER
-      // Check Order -> Shipping -> Billing -> Default Profile
-      let firstName = customer.first_name || shipping.first_name || billing.first_name || defaultAddr.first_name || '';
-      let lastName = customer.last_name || shipping.last_name || billing.last_name || defaultAddr.last_name || '';
+      // --- NAME CORRECTION ---
+      // 1. Try Shipping Name (Best for Guests/One-time checkouts)
+      // 2. Try Billing Name
+      // 3. Try Customer Profile Name
+      let customerName = shipping.name || billing.name;
       
-      let customerName = (firstName || lastName) ? `${firstName} ${lastName}`.trim() : '';
-
-      // Fallback: If name is totally empty, use Email or Phone
-      if (!customerName) {
-          if (order.email) customerName = order.email;
-          else if (order.phone) customerName = order.phone;
-          else customerName = 'Guest / Walk-in';
+      if (!customerName && (customer.first_name || customer.last_name)) {
+         customerName = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
       }
 
-      // 2. ROBUST PHONE FINDER
-      const phone = order.phone || customer.phone || shipping.phone || billing.phone || defaultAddr.phone || 'No Phone';
+      // Fallback
+      if (!customerName) {
+          customerName = order.email || order.phone || 'Guest';
+      }
 
-      // 3. Location Finder
+      // --- PHONE CORRECTION ---
+      // Prioritize Shipping Phone as it's the delivery contact
+      const phone = shipping.phone || billing.phone || customer.phone || order.phone || 'No Phone';
+
+      // --- LOCATION CORRECTION ---
       const location = shipping.city 
         ? `${shipping.city}, ${shipping.province_code || ''}` 
         : billing.city 
           ? `${billing.city}, ${billing.province_code || ''}`
           : 'Unknown';
 
-      // 4. Status Logic
+      // --- STATUS LOGIC ---
       let status = 'Pending';
       if (order.cancelled_at) status = 'Cancelled';
       else if (order.fulfillment_status === 'fulfilled') status = 'Delivered';
